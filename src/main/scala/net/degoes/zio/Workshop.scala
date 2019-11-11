@@ -2,6 +2,8 @@ package net.degoes.zio
 
 import zio._
 
+import scala.io.{BufferedSource, Source}
+
 object HelloWorld extends App {
   import zio.console._
 
@@ -11,7 +13,7 @@ object HelloWorld extends App {
     * Implement a simple "Hello World" program using the effect returned by `putStrLn`.
     */
   def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
-    ZIO.succeed(0)
+    putStrLn("Hello World!") as 0
 }
 
 object ErrorConversion extends App {
@@ -30,7 +32,8 @@ object ErrorConversion extends App {
     * Using `ZIO#orElse` or `ZIO#fold`, have the `run` function compose the
     * preceding `failed` effect into the effect that `run` returns.
     */
-  def run(args: List[String]): ZIO[ZEnv, Nothing, Int] = ???
+  def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
+    failed as 0 orElse ZIO.succeed(1)
 }
 
 object PromptName extends App {
@@ -44,7 +47,12 @@ object PromptName extends App {
     * Implement a simple program that asks the user for their name (using
     * `getStrLn`), and then prints it out to the user (using `putStrLn`).
     */
-  def run(args: List[String]): ZIO[ZEnv, Nothing, Int] = ???
+  def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
+    (for {
+      _ <- putStrLn("What is your name?")
+      name <- getStrLn
+      _ <- putStrLn(s"Hello, $name")
+    } yield 0) orElse ZIO.succeed(1)
 }
 
 object ZIOTypes {
@@ -55,11 +63,11 @@ object ZIOTypes {
     *
     * Provide definitions for the ZIO type aliases below.
     */
-  type Task[+A] = ???
-  type UIO[+A] = ???
-  type RIO[-R, +A] = ???
-  type IO[+E, +A] = ???
-  type URIO[-R, +A] = ???
+  type Task[+A] = ZIO[Any, Throwable, A]
+  type UIO[+A] = ZIO[Any, Nothing, A]
+  type RIO[-R, +A] = ZIO[R, Throwable, A]
+  type IO[+E, +A] = ZIO[Any, E, A]
+  type URIO[-R, +A] = ZIO[R, Nothing, A]
 }
 
 object NumberGuesser extends App {
@@ -76,8 +84,13 @@ object NumberGuesser extends App {
     * Choose a random number (using `nextInt`), and then ask the user to guess
     * the number, feeding their response to `analyzeAnswer`, above.
     */
-  def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
-    ???
+  def run(args: List[String]): ZIO[ZEnv, Nothing, Int] = {
+    (for {
+      randInt <- nextInt(100)
+      _ <- putStrLn("Please enter an integer from 0 to 100")
+      guess <- getStrLn
+    } yield analyzeAnswer(randInt, guess)) as 0 orElse ZIO.succeed(1)
+  }
 }
 
 object AlarmApp extends App {
@@ -93,12 +106,16 @@ object AlarmApp extends App {
     */
   lazy val getAlarmDuration: ZIO[Console, IOException, Duration] = {
     def parseDuration(input: String): IO[NumberFormatException, Duration] =
-      ???
+      ZIO.effect(input.toInt.seconds).refineToOrDie[NumberFormatException]
 
     def fallback(input: String): ZIO[Console, IOException, Duration] =
-      ???
+      parseDuration(input) orElse
+        (putStrLn("You didn't enter a number of seconds") *> getAlarmDuration)
 
-    ???
+    for {
+      input <- getStrLn
+      duration <- fallback(input)
+    } yield duration
   }
 
   /**
@@ -109,7 +126,12 @@ object AlarmApp extends App {
     * alarm message.
     */
   def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
-    ???
+    (for {
+      _ <- putStr("Please enter the number of seconds to sleep: ")
+      duration <- getAlarmDuration
+      _ <- clock.sleep(duration)
+      _ <- putStrLn("Wake up!")
+    } yield ()) as 0 orElse ZIO.succeed(1)
 }
 
 object Cat extends App {
@@ -117,13 +139,24 @@ object Cat extends App {
   import zio.blocking._
   import java.io.IOException
 
+  private def openFile(file: String) =
+    blocking(ZIO.effect(Source.fromFile(file))).refineToOrDie[IOException]
+
+  private def closeFile(bs: BufferedSource) =
+    ZIO.effect(bs.close()).orDie
+
   /**
     * EXERCISE 8
     *
     * Implement a function to read a file on the blocking thread pool, storing
     * the result into a string.
     */
-  def readFile(file: String): ZIO[Blocking, IOException, String] = ???
+  def readFile(file: String): ZIO[Blocking, IOException, String] = {
+    def doRead(bs: BufferedSource) =
+      ZIO.succeed(bs.mkString).refineToOrDie[IOException]
+
+    openFile(file).bracket(closeFile, doRead)
+  }
 
   /**
     * EXERCISE 9
@@ -132,7 +165,10 @@ object Cat extends App {
     * contents of the specified file to standard output.
     */
   def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
-    ???
+    (for {
+      putStrLns <- ZIO.sequence(args.map(readFile)).map(_.map(putStrLn))
+      _ <- ZIO.sequence(putStrLns)
+    } yield 0) orElse ZIO.succeed(1)
 }
 
 object CatIncremental extends App {
