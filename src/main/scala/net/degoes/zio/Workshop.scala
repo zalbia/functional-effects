@@ -174,7 +174,9 @@ object Cat extends App {
 object CatIncremental extends App {
   import zio.console._
   import zio.blocking._
-  import java.io._
+  import java.io.{Console => _, _}
+
+  val chunkSize = 1024
 
   /**
     * EXERCISE 10
@@ -183,12 +185,27 @@ object CatIncremental extends App {
     * the blocking thread pool.
     */
   final case class FileHandle private (private val is: InputStream) {
-    final def close: ZIO[Blocking, IOException, Unit] = ???
+    final def close: ZIO[Blocking, IOException, Unit] = blocking {
+      ZIO.effect(is.close()).refineToOrDie[IOException]
+    }
 
-    final def read: ZIO[Blocking, IOException, Option[Chunk[Byte]]] = ???
+    final def read: ZIO[Blocking, IOException, Option[Chunk[Byte]]] = blocking {
+      ZIO
+        .effect(
+          if (is.available() == 0) None
+          else {
+            Some(Chunk.fromArray(is.readNBytes(chunkSize)))
+          })
+        .refineToOrDie[IOException]
+    }
   }
   object FileHandle {
-    final def open(file: String): ZIO[Blocking, IOException, FileHandle] = ???
+    final def open(file: String): ZIO[Blocking, IOException, FileHandle] =
+      blocking {
+        ZIO
+          .effect(FileHandle(new FileInputStream(file)))
+          .refineToOrDie[IOException]
+      }
   }
 
   /**
@@ -199,7 +216,19 @@ object CatIncremental extends App {
     * interruption.
     */
   def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
-    ???
+    (ZIO.fromOption(args.headOption) >>= cat) as 0 orElse ZIO.succeed(1)
+
+  def cat(file: String): ZIO[Console with Blocking, IOException, Unit] =
+    ZManaged.make(FileHandle.open(file))(_.close.orDie).use(read)
+
+  def read(
+      fileHandle: FileHandle): ZIO[Console with Blocking, IOException, Unit] =
+    for {
+      opt <- fileHandle.read
+      _ <- opt
+        .map(chunk => putStr(chunk.map(_.toChar).mkString) *> read(fileHandle))
+        .getOrElse(ZIO.unit)
+    } yield ()
 }
 
 object ComputePi extends App {
