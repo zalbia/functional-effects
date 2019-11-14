@@ -5,6 +5,7 @@ import zio._
 import scala.io.{BufferedSource, Source}
 
 object HelloWorld extends App {
+
   import zio.console._
 
   /**
@@ -49,9 +50,9 @@ object PromptName extends App {
     */
   def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
     (for {
-      _ <- putStrLn("What is your name?")
+      _    <- putStrLn("What is your name?")
       name <- getStrLn
-      _ <- putStrLn(s"Hello, $name")
+      _    <- putStrLn(s"Hello, $name")
     } yield 0) orElse ZIO.succeed(1)
 }
 
@@ -63,14 +64,15 @@ object ZIOTypes {
     *
     * Provide definitions for the ZIO type aliases below.
     */
-  type Task[+A] = ZIO[Any, Throwable, A]
-  type UIO[+A] = ZIO[Any, Nothing, A]
-  type RIO[-R, +A] = ZIO[R, Throwable, A]
-  type IO[+E, +A] = ZIO[Any, E, A]
+  type Task[+A]     = ZIO[Any, Throwable, A]
+  type UIO[+A]      = ZIO[Any, Nothing, A]
+  type RIO[-R, +A]  = ZIO[R, Throwable, A]
+  type IO[+E, +A]   = ZIO[Any, E, A]
   type URIO[-R, +A] = ZIO[R, Nothing, A]
 }
 
 object NumberGuesser extends App {
+
   import zio.console._
   import zio.random._
 
@@ -87,13 +89,14 @@ object NumberGuesser extends App {
   def run(args: List[String]): ZIO[ZEnv, Nothing, Int] = {
     (for {
       randInt <- nextInt(100)
-      _ <- putStrLn("Please enter an integer from 0 to 100")
-      guess <- getStrLn
+      _       <- putStrLn("Please enter an integer from 0 to 100")
+      guess   <- getStrLn
     } yield analyzeAnswer(randInt, guess)) as 0 orElse ZIO.succeed(1)
   }
 }
 
 object AlarmApp extends App {
+
   import zio.console._
   import zio.duration._
   import java.io.IOException
@@ -113,7 +116,7 @@ object AlarmApp extends App {
         (putStrLn("You didn't enter a number of seconds") *> getAlarmDuration)
 
     for {
-      input <- getStrLn
+      input    <- getStrLn
       duration <- fallback(input)
     } yield duration
   }
@@ -127,14 +130,15 @@ object AlarmApp extends App {
     */
   def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
     (for {
-      _ <- putStr("Please enter the number of seconds to sleep: ")
+      _        <- putStr("Please enter the number of seconds to sleep: ")
       duration <- getAlarmDuration
-      _ <- clock.sleep(duration)
-      _ <- putStrLn("Wake up!")
+      _        <- clock.sleep(duration)
+      _        <- putStrLn("Wake up!")
     } yield ()) as 0 orElse ZIO.succeed(1)
 }
 
 object Cat extends App {
+
   import zio.console._
   import zio.blocking._
   import java.io.IOException
@@ -167,11 +171,12 @@ object Cat extends App {
   def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
     (for {
       putStrLns <- ZIO.sequence(args.map(readFile)).map(_.map(putStrLn))
-      _ <- ZIO.sequence(putStrLns)
+      _         <- ZIO.sequence(putStrLns)
     } yield 0) orElse ZIO.succeed(1)
 }
 
 object CatIncremental extends App {
+
   import zio.console._
   import zio.blocking._
   import java.io.{Console => _, _}
@@ -199,6 +204,7 @@ object CatIncremental extends App {
         .refineToOrDie[IOException]
     }
   }
+
   object FileHandle {
     final def open(file: String): ZIO[Blocking, IOException, FileHandle] =
       blocking {
@@ -226,23 +232,23 @@ object CatIncremental extends App {
     for {
       opt <- fileHandle.read
       _ <- opt
-        .map(chunk => putStr(chunk.map(_.toChar).mkString) *> read(fileHandle))
-        .getOrElse(ZIO.unit)
+            .map(chunk =>
+              putStr(chunk.map(_.toChar).mkString) *> read(fileHandle))
+            .getOrElse(ZIO.unit)
     } yield ()
 }
 
 object ComputePi extends App {
+
   import zio.random._
   import zio.console._
+  import java.lang.Runtime.getRuntime
 
   /**
     * Some state to keep track of all points inside a circle,
     * and total number of points.
     */
-  final case class PiState(
-      inside: Ref[Long],
-      total: Ref[Long]
-  )
+  final case class PiState(inside: Ref[Long], total: Ref[Long])
 
   /**
     * A function to estimate pi.
@@ -270,10 +276,73 @@ object ComputePi extends App {
     * ongoing estimates continuously until the estimation is complete.
     */
   def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
-    ???
+    (for {
+      sampleSize  <- readSampleSize(args)
+      concurrency = getRuntime.availableProcessors // unsafe, i know. too lazy :/
+      state       <- initState
+      workLoads   = createWorkloads(sampleSize, concurrency, state)
+      _           <- runWorkloads(workLoads)
+      _           <- printFinalEstimate(state, sampleSize)
+    } yield 0) orElse ZIO.succeed(1)
+
+  private def createWorkloads(sampleSize: Int,
+                              concurrency: Int,
+                              state: PiState) =
+    workload(state, sampleSize % concurrency) :: // remainder workload
+      List.fill(concurrency - 1)(workload(state, sampleSize / concurrency))
+
+  private def runWorkloads(workloads: List[ZIO[ZEnv, Nothing, Unit]]) =
+    for {
+      fibers <- ZIO.sequence(workloads.map(_.fork))
+      _      <- ZIO.sequence(fibers.map(_.join))
+    } yield ()
+
+  private def printFinalEstimate(state: PiState, sampleSize: Int) =
+    for {
+      finalInside <- state.inside.get
+      finalTotal  <- state.total.get
+      _ <- putStrLn(
+            s"The final estimate of pi after $sampleSize samples is " +
+              s"${estimatePi(finalInside, finalTotal)}.")
+    } yield ()
+
+  private def readSampleSize(args: List[String]) =
+    for {
+      input      <- ZIO.fromOption(args.headOption)
+      sampleSize <- ZIO.effect(input.toInt).refineToOrDie[NumberFormatException]
+    } yield sampleSize
+
+  def initState: ZIO[Any, Nothing, PiState] =
+    for {
+      inside <- Ref.make(0L)
+      total  <- Ref.make(0L)
+    } yield PiState(inside, total)
+
+  def workload(state: PiState,
+               size: Int): ZIO[Console with Random, Nothing, Unit] =
+    if (size > 0)
+      simulate(state) *> ongoingEstimate(state) *> workload(state, size - 1)
+    else ZIO.unit
+
+  def ongoingEstimate(state: PiState): ZIO[Console, Nothing, Unit] =
+    for {
+      inside     <- state.inside.get
+      total      <- state.total.get
+      piEstimate = estimatePi(inside, total)
+      _          <- putStrLn(s"Pi estimate: $piEstimate")
+    } yield ()
+
+  def simulate(state: PiState): ZIO[Random, Nothing, Unit] =
+    for {
+      point <- randomPoint
+      _ <- state.inside.update(n =>
+            if (insideCircle(point._1, point._2)) n + 1 else n)
+      _ <- state.total.update(_ + 1)
+    } yield ()
 }
 
 object Hangman extends App {
+
   import zio.console._
   import zio.random._
   import java.io.IOException
@@ -313,10 +382,10 @@ object Hangman extends App {
 
     /**
       *
-      *  f     n  c  t  o
+      * f     n  c  t  o
       *  -  -  -  -  -  -  -
       *
-      *  Guesses: a, z, y, x
+      * Guesses: a, z, y, x
       *
       */
     val word =
@@ -344,12 +413,19 @@ object Hangman extends App {
   }
 
   sealed trait GuessResult
+
   object GuessResult {
+
     case object Won extends GuessResult
+
     case object Lost extends GuessResult
+
     case object Correct extends GuessResult
+
     case object Incorrect extends GuessResult
+
     case object Unchanged extends GuessResult
+
   }
 
   def guessResult(oldState: State, newState: State, char: Char): GuessResult =
@@ -376,6 +452,7 @@ object Hangman extends App {
   * demonstrate its correctness and testability.
   */
 object TicTacToe extends App {
+
   import zio.console._
 
   sealed trait Mark {
@@ -383,11 +460,16 @@ object TicTacToe extends App {
       case Mark.X => 'X'
       case Mark.O => 'O'
     }
+
     final def render: String = renderChar.toString
   }
+
   object Mark {
+
     case object X extends Mark
+
     case object O extends Mark
+
   }
 
   final case class Board private (value: Vector[Vector[Option[Mark]]]) {
@@ -455,6 +537,7 @@ object TicTacToe extends App {
         col <- (col0 to (col0 + colInc * 2))
       } yield value(row)(col)
   }
+
   object Board {
     final val empty = new Board(Vector.fill(3)(Vector.fill(3)(None)))
 
