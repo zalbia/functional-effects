@@ -350,10 +350,10 @@ object Hangman extends App {
   lazy val getChoice: ZIO[Console, IOException, Char] =
     for {
       line <- getStrLn
-      choice <- if (line.length == 1)
+      choice <- if (line.length == 1 && line.charAt(0).isLetter)
                  ZIO.succeed(line.charAt(0).toLower)
                else
-                 putStrLn("Must enter a single character") *> getChoice
+                 putStr("Must enter a single letter: ") *> getChoice
     } yield choice
 
   /**
@@ -396,18 +396,19 @@ object Hangman extends App {
       _ <- guessResult(oldState, newState, char) match {
             case GuessResult.Won =>
               putStrLn(
-                s"Well done, ${oldState.name}! You guessed ${oldState.word}")
+                s"Well done, ${oldState.name}! " +
+                  s"You guessed ${"\"" + oldState.word + "\""}.")
             case GuessResult.Lost =>
               putStrLn(
                 s"Game over, ${oldState.name}! The word was " +
-                  s"${oldState.word}. Try again next time.")
+                  s"${"\"" + oldState.word + "\""}. Try again next time.")
             case GuessResult.Correct =>
               putStrLn(s"You guessed a correct letter, '$char'.") *>
                 gameLoop(ref)
             case GuessResult.Incorrect =>
               putStrLn(s"'$char' is not in the word.") *> gameLoop(ref)
             case GuessResult.Unchanged =>
-              putStrLn("You already guessed that letter.") *> gameLoop(ref)
+              putStrLn(s"You already guessed '$char'.") *> gameLoop(ref)
           }
     } yield ()
 
