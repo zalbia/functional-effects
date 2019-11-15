@@ -280,8 +280,8 @@ object ComputePi extends App {
       sampleSize  <- readSampleSize(args)
       concurrency = getRuntime.availableProcessors // unsafe, i know. too lazy :/
       state       <- initState
-      workLoads   = createWorkloads(sampleSize, concurrency, state)
-      _           <- runWorkloads(workLoads)
+      workloads   = createWorkloads(sampleSize, concurrency, state)
+      _           <- ZIO.collectAllPar(workloads)
       _           <- printFinalEstimate(state, sampleSize)
     } yield 0) orElse ZIO.succeed(1)
 
@@ -290,12 +290,6 @@ object ComputePi extends App {
                               state: PiState) =
     workload(state, sampleSize % concurrency) :: // remainder workload
       List.fill(concurrency - 1)(workload(state, sampleSize / concurrency))
-
-  private def runWorkloads(workloads: List[ZIO[ZEnv, Nothing, Unit]]) =
-    for {
-      fibers <- ZIO.sequence(workloads.map(_.fork))
-      _      <- ZIO.sequence(fibers.map(_.join))
-    } yield ()
 
   private def printFinalEstimate(state: PiState, sampleSize: Int) =
     for {
