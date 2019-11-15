@@ -53,7 +53,8 @@ object PromptName extends App {
       _    <- putStrLn("What is your name?")
       name <- getStrLn
       _    <- putStrLn(s"Hello, $name")
-    } yield 0) orElse ZIO.succeed(1)
+    } yield ())
+      .foldM(e => putStrLn(e.getMessage) *> ZIO.succeed(1), _ => ZIO.succeed(0))
 }
 
 object ZIOTypes {
@@ -157,12 +158,8 @@ object Cat extends App {
     * Implement a function to read a file on the blocking thread pool, storing
     * the result into a string.
     */
-  def readFile(file: String): ZIO[Blocking, IOException, String] = {
-    def doRead(bs: BufferedSource) =
-      ZIO.succeed(bs.mkString).refineToOrDie[IOException]
-
-    openFile(file).bracket(closeFile, doRead)
-  }
+  def readFile(file: String): ZIO[Blocking, IOException, String] =
+    openFile(file).bracket(closeFile, bs => ZIO.succeed(bs.mkString))
 
   /**
     * EXERCISE 9
@@ -211,7 +208,7 @@ object CatIncremental extends App {
       blocking {
         ZIO
           .effect(FileHandle(new FileInputStream(file)))
-          .refineToOrDie[IOException]
+          .refineToOrDie[FileNotFoundException]
       }
   }
 
