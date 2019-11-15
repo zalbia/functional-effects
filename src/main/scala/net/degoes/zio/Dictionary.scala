@@ -1,7 +1,7 @@
 package net.degoes.zio
 
 object Dictionary {
-  val Dictionary = List(
+  val Dictionary = Vector(
     "aaron",
     "abelian",
     "ability",
