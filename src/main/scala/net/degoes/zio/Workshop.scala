@@ -402,24 +402,33 @@ object Hangman extends App {
       _        <- ref.update(_.addChar(char))
       newState <- ref.get
       _        <- renderState(newState)
-      _ <- guessResult(oldState, newState, char) match {
-            case GuessResult.Won =>
-              putStrLn(
-                s"Well done, ${oldState.name}! " +
-                  s"You guessed ${"\"" + oldState.word + "\""}.")
-            case GuessResult.Lost =>
-              putStrLn(
-                s"Game over, ${oldState.name}! The word was " +
-                  s"${"\"" + oldState.word + "\""}. Try again next time.")
-            case GuessResult.Correct =>
-              putStrLn(s"You guessed a correct letter, '$char'.") *>
-                gameLoop(ref)
-            case GuessResult.Incorrect =>
-              putStrLn(s"'$char' is not in the word.") *> gameLoop(ref)
-            case GuessResult.Unchanged =>
-              putStrLn(s"You already guessed '$char'.") *> gameLoop(ref)
-          }
+      result   = guessResult(oldState, newState, char)
+      _        <- handleGuessResult(ref, oldState, char, result)
     } yield ()
+
+  private def handleGuessResult(ref: Ref[State],
+                                oldState: State,
+                                char: Char,
+                                result: GuessResult) = {
+    import GuessResult._
+    result match {
+      case Won =>
+        putStrLn(
+          s"Well done, ${oldState.name}! " +
+            s"You guessed ${"\"" + oldState.word + "\""}.")
+      case Lost =>
+        putStrLn(
+          s"Game over, ${oldState.name}! The word was " +
+            s"${"\"" + oldState.word + "\""}. Try again next time.")
+      case Correct =>
+        putStrLn(s"You guessed a correct letter, '$char'.") *>
+          gameLoop(ref)
+      case Incorrect =>
+        putStrLn(s"'$char' is not in the word.") *> gameLoop(ref)
+      case Unchanged =>
+        putStrLn(s"You already guessed '$char'.") *> gameLoop(ref)
+    }
+  }
 
   def renderState(state: State): ZIO[Console, Nothing, Unit] = {
 
