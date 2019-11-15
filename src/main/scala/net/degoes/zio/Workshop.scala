@@ -34,7 +34,7 @@ object ErrorConversion extends App {
     * preceding `failed` effect into the effect that `run` returns.
     */
   def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
-    failed as 0 orElse ZIO.succeed(1)
+    failed.foldM(s => putStrLn(s) *> ZIO.succeed(1), _ => ZIO.succeed(0))
 }
 
 object PromptName extends App {
@@ -113,7 +113,8 @@ object AlarmApp extends App {
 
     def fallback(input: String): ZIO[Console, IOException, Duration] =
       parseDuration(input) orElse
-        (putStrLn("You didn't enter a number of seconds") *> getAlarmDuration)
+        (putStr("Please enter the number of seconds to sleep: ") *>
+          getAlarmDuration)
 
     for {
       input    <- getStrLn
@@ -134,7 +135,8 @@ object AlarmApp extends App {
       duration <- getAlarmDuration
       _        <- clock.sleep(duration)
       _        <- putStrLn("Wake up!")
-    } yield ()) as 0 orElse ZIO.succeed(1)
+    } yield ())
+      .foldM(e => putStrLn(e.getMessage) *> ZIO.succeed(1), _ => ZIO.succeed(0))
 }
 
 object Cat extends App {
@@ -172,7 +174,8 @@ object Cat extends App {
     (for {
       putStrLns <- ZIO.sequence(args.map(readFile)).map(_.map(putStrLn))
       _         <- ZIO.sequence(putStrLns)
-    } yield 0) orElse ZIO.succeed(1)
+    } yield 0)
+      .foldM(e => putStrLn(e.getMessage) *> ZIO.succeed(1), _ => ZIO.succeed(0))
 }
 
 object CatIncremental extends App {
@@ -181,7 +184,7 @@ object CatIncremental extends App {
   import zio.blocking._
   import java.io.{Console => _, _}
 
-  val chunkSize = 1024
+  val CHUNK_SIZE = 1024
 
   /**
     * EXERCISE 10
@@ -198,9 +201,7 @@ object CatIncremental extends App {
       ZIO
         .effect(
           if (is.available() == 0) None
-          else {
-            Some(Chunk.fromArray(is.readNBytes(chunkSize)))
-          })
+          else Some(Chunk.fromArray(is.readNBytes(CHUNK_SIZE))))
         .refineToOrDie[IOException]
     }
   }
@@ -222,7 +223,10 @@ object CatIncremental extends App {
     * interruption.
     */
   def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
-    (ZIO.fromOption(args.headOption) >>= cat) as 0 orElse ZIO.succeed(1)
+    args.headOption
+      .map(cat)
+      .getOrElse(ZIO.unit)
+      .foldM(e => putStrLn(e.getMessage) *> ZIO.succeed(1), _ => ZIO.succeed(0))
 
   def cat(file: String): ZIO[Console with Blocking, IOException, Unit] =
     ZManaged.make(FileHandle.open(file))(_.close.orDie).use(read)
@@ -283,7 +287,8 @@ object ComputePi extends App {
       workloads   = createWorkloads(sampleSize, concurrency, state)
       _           <- ZIO.collectAllPar(workloads)
       _           <- printFinalEstimate(state, sampleSize)
-    } yield 0) orElse ZIO.succeed(1)
+    } yield ())
+      .foldM(e => putStrLn(e.getMessage) *> ZIO.succeed(1), _ => ZIO.succeed(0))
 
   private def createWorkloads(sampleSize: Int,
                               concurrency: Int,
@@ -301,10 +306,14 @@ object ComputePi extends App {
     } yield ()
 
   private def readSampleSize(args: List[String]) =
-    for {
-      input      <- ZIO.fromOption(args.headOption)
-      sampleSize <- ZIO.effect(input.toInt).refineToOrDie[NumberFormatException]
-    } yield sampleSize
+    args.headOption
+      .map(
+        input =>
+          ZIO
+            .effect(input.toInt)
+            .refineToOrDie[NumberFormatException])
+      .getOrElse(
+        ZIO.fail(new IllegalArgumentException("No sample size given.")))
 
   def initState: ZIO[Any, Nothing, PiState] =
     for {
@@ -482,7 +491,8 @@ object Hangman extends App {
       word  <- chooseWord
       state <- Ref.make(State(name, Set.empty, word))
       _     <- gameLoop(state)
-    } yield 0) orElse ZIO.succeed(1)
+    } yield ())
+      .foldM(e => putStrLn(e.getMessage) *> ZIO.succeed(1), _ => ZIO.succeed(0))
 }
 
 /**
