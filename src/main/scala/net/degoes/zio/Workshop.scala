@@ -150,7 +150,7 @@ object Cat extends App {
     blocking(ZIO.effect(Source.fromFile(file))).refineToOrDie[IOException]
 
   private def closeFile(bs: BufferedSource) =
-    ZIO.effect(bs.close()).orDie
+    blocking(ZIO.effect(bs.close()).orDie)
 
   /**
     * EXERCISE 8
