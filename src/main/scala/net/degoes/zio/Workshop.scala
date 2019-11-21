@@ -510,6 +510,7 @@ object Hangman extends App {
 object TicTacToe extends App {
 
   import zio.console._
+  import java.io.IOException
 
   sealed trait Mark {
     final def renderChar: Char = this match {
@@ -540,7 +541,7 @@ object TicTacToe extends App {
       * Places a mark on the board at the specified row/col.
       */
     final def place(row: Int, col: Int, mark: Mark): Option[Board] =
-      if (row >= 0 && col >= 0 && row < 3 && col < 3)
+      if (row >= 0 && col >= 0 && row < 3 && col < 3 && value(row)(col).isEmpty)
         Some(
           copy(value = value.updated(row, value(row).updated(col, Some(mark))))
         )
@@ -561,6 +562,9 @@ object TicTacToe extends App {
       if (wonBy(Mark.X)) Some(Mark.X)
       else if (wonBy(Mark.O)) Some(Mark.O)
       else None
+
+    def gameIsOver: Boolean =
+      won.isDefined || value.forall(_.forall(_.isDefined))
 
     private final def wonBy(mark: Mark): Boolean =
       wonBy(0, 0, 1, 1, mark) ||
@@ -630,9 +634,100 @@ object TicTacToe extends App {
     .get
     .render
 
+  import Hangman.getName
+
+  case class State private (xName: String,
+                            oName: String,
+                            board: Board,
+                            turn: Mark) {
+    def takeTurn(row: Int, col: Int): MoveResult =
+      board.place(row, col, turn).map { newBoard =>
+        State(xName, oName, newBoard, if (turn == Mark.X) Mark.O else Mark.X)
+      } match {
+        case Some(newState) =>
+          if (this == newState) BoardUnchanged(newState)
+          else if (newState.board.gameIsOver) {
+            newState.board.won
+              .map(winner => Won(newState, winner))
+              .getOrElse(Draw(newState))
+          } else BoardChanged(newState)
+        case None => IncorrectInput(this)
+      }
+
+    def nameOf(mark: Mark): String = mark match {
+      case Mark.X => xName
+      case Mark.O => oName
+    }
+  }
+
+  object State {
+    def init(xName: String, yName: String) =
+      State(xName, yName, Board.empty, Mark.X)
+  }
+
+  sealed abstract class MoveResult(state: State)
+  sealed abstract class GameOver(state: State)     extends MoveResult(state)
+  final case class Won(state: State, winner: Mark) extends GameOver(state)
+  final case class Draw(state: State)              extends GameOver(state)
+  final case class BoardChanged(state: State)      extends MoveResult(state)
+  final case class BoardUnchanged(state: State)    extends MoveResult(state)
+  final case class IncorrectInput(state: State)    extends MoveResult(state)
+
   /**
     * The entry point to the game will be here.
     */
   def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
-    putStrLn(TestBoard) as 0
+    (for {
+      _          <- putStrLn("Welcome to Tic Tac Toe")
+      _          <- putStrLn("Please enter the first player's name.")
+      firstName  <- getName
+      _          <- putStrLn("Please enter the second player's name.")
+      secondName <- getName
+      refState   <- Ref.make(State(firstName, secondName, Board.empty, Mark.X))
+      _          <- gameLoop(refState)
+    } yield ())
+      .foldM(e => putStrLn(e.getMessage) *> ZIO.succeed(1), _ => ZIO.succeed(0))
+
+  def gameLoop(ref: Ref[State]): ZIO[Console, IOException, Unit] =
+    for {
+      oldState   <- ref.get
+      _          <- putStrLn(oldState.board.render)
+      rowCol     <- readPlacement(oldState)
+      (row, col) = rowCol
+      _ <- oldState.takeTurn(row, col) match {
+            case Draw(state) =>
+              ref.update(_ => state) *> putStrLn(
+                "Game over. The game ended " +
+                  "in a draw.")
+            case Won(state, mark) =>
+              ref.update(_ => state) *> putStrLn(
+                s"Game over. ${state.nameOf(mark)} won!")
+            case BoardChanged(state) =>
+              ref.update(_ => state) *> gameLoop(ref)
+            case BoardUnchanged(_) =>
+              putStrLn(
+                "You tried to place a mark in an occupied slot. Try " +
+                  "putting a mark some place else") *> gameLoop(ref)
+            case IncorrectInput(_) =>
+              putStrLn("You entered an invalid spot. Try again") *> gameLoop(
+                ref)
+          }
+    } yield ()
+
+  def readPlacement(oldState: State): ZIO[Console, IOException, (Int, Int)] =
+    for {
+      _ <- putStr(
+            s"Enter where to place the next ${oldState.turn.render} " +
+              "(ex. \"1 1\" without quotes ): ")
+      line   <- getStrLn
+      tokens = line.split(" ")
+      valid  = tokens.size == 2 && tokens.forall(_.matches("\\d+"))
+      numbers <- if (valid) {
+                  ZIO
+                    .effect(tokens.map(_.toInt))
+                    .orDie
+                    .map(arr => (arr(0), arr(1)))
+                } else
+                  readPlacement(oldState)
+    } yield numbers
 }
