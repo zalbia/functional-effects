@@ -19,6 +19,13 @@ object WorkshopSpec
             assert(value, equalTo(0)) &&
               assert(output, equalTo(Vector("Hello World!\n")))
         },
+        testM("ErrorConversion") {
+          for {
+            value <- ErrorConversion.run(Nil)
+            output <- TestConsole.output
+          } yield assert(value, equalTo(1)) &&
+            assert(output, equalTo(Vector("About to fail...\n", "Uh oh!\n")))
+        },
         suite("Board")(
           test("won horizontal first") {
             horizontalFirst(Mark.X) && horizontalFirst(Mark.O)
