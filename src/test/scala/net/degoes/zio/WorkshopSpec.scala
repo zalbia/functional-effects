@@ -13,7 +13,7 @@ object WorkshopSpec
       suite("Workshop tests")(
         testM("HelloWorld") {
           for {
-            value <- HelloWorld.run(Nil)
+            value  <- HelloWorld.run(Nil)
             output <- TestConsole.output
           } yield
             assert(value, equalTo(0)) &&
@@ -21,10 +21,22 @@ object WorkshopSpec
         },
         testM("ErrorConversion") {
           for {
-            value <- ErrorConversion.run(Nil)
+            value  <- ErrorConversion.run(Nil)
             output <- TestConsole.output
-          } yield assert(value, equalTo(1)) &&
-            assert(output, equalTo(Vector("About to fail...\n", "Uh oh!\n")))
+          } yield
+            assert(value, equalTo(1)) &&
+              assert(output, equalTo(Vector("About to fail...\n", "Uh oh!\n")))
+        },
+        testM("PromptName") {
+          for {
+            _                  <- TestConsole.feedLines("Foo")
+            value              <- PromptName.run(Nil)
+            output             <- TestConsole.output
+            (prompt, greeting) = (output(0), output(1))
+          } yield
+            assert(value, equalTo(0)) &&
+              assert(prompt, containsString("name")) &&
+              assert(greeting, equalTo("Hello, Foo!\n"))
         },
         suite("Board")(
           test("won horizontal first") {

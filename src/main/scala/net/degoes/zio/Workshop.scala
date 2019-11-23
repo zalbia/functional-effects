@@ -52,7 +52,7 @@ object PromptName extends App {
     (for {
       _    <- putStrLn("What is your name?")
       name <- getStrLn
-      _    <- putStrLn(s"Hello, $name")
+      _    <- putStrLn(s"Hello, $name!")
     } yield ())
       .foldM(e => putStrLn(e.getMessage) *> ZIO.succeed(1), _ => ZIO.succeed(0))
 }
