@@ -28,26 +28,18 @@ object WorkshopSpec
             assert(value, equalTo(1)) &&
               assert(output, equalTo(Vector("About to fail...\n", "Uh oh!\n")))
         },
-        testM("PromptName") {
-          val nameGen =
-            Gen.listOf(Gen.alphaNumericChar).filter(_.nonEmpty).map(_.mkString)
-          checkM(nameGen) {
-            name =>
-              for {
-                res <- TestEnvironment.Value.reserve
-                env <- res.acquire
-                foo <- (for {
-                        _                  <- TestConsole.feedLines(name)
-                        value              <- PromptName.run(Nil)
-                        output             <- TestConsole.output
-                        (prompt, greeting) = (output(0), output(1))
-                      } yield
-                        assert(value, equalTo(0)) &&
-                          assert(prompt, containsString("name")) &&
-                          assert(greeting, equalTo(s"Hello, $name!\n")))
-                        .provide(env)
-              } yield foo
-          }
+        checkM(
+          Gen.listOf(Gen.alphaNumericChar).filter(_.nonEmpty).map(_.mkString)) {
+          name =>
+            for {
+              _                  <- TestConsole.feedLines(name)
+              value              <- PromptName.run(Nil)
+              output             <- TestConsole.output
+              (prompt, greeting) = (output(0), output(1))
+            } yield
+              assert(value, equalTo(0)) &&
+                assert(prompt, containsString("name")) &&
+                assert(greeting, equalTo(s"Hello, $name!\n"))
         },
         suite("Board")(
           test("won horizontal first") {
