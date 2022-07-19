@@ -49,13 +49,20 @@ object ZIOModel {
    * Implement all missing methods on the ZIO companion object.
    */
   object ZIO {
-    def succeed[A](success: => A): ZIO[Any, Nothing, A] = ???
+    def succeed[A](success: => A): ZIO[Any, Nothing, A] =
+      ZIO(_ => Right(success))
 
-    def fail[E](error: => E): ZIO[Any, E, Nothing] = ???
+    def fail[E](error: => E): ZIO[Any, E, Nothing] =
+      ZIO(_ => Left(error))
 
-    def attempt[A](code: => A): ZIO[Any, Throwable, A] = ???
+    def attempt[A](code: => A): ZIO[Any, Throwable, A] =
+      ZIO(_ =>
+        try { Right(code) }
+        catch (e: Throwable) => Left(e)
+      )
 
-    def environment[R]: ZIO[R, Nothing, ZEnvironment[R]] = ???
+    def environment[R]: ZIO[R, Nothing, ZEnvironment[R]] =
+      ZIO(r => Right(r))
   }
 
   /**
@@ -64,17 +71,38 @@ object ZIOModel {
    * Implement all missing methods on the ZIO class.
    */
   final case class ZIO[-R, +E, +A](run: ZEnvironment[R] => Either[E, A]) { self =>
-    def map[B](f: A => B): ZIO[R, E, B] = ???
+    def map[B](f: A => B): ZIO[R, E, B] =
+      ZIO(env =>
+        run(env) match {
+          case Left(e)  => Left(e)
+          case Right(a) => Right(f(a))
+        }
+      )
 
     def flatMap[R1 <: R, E1 >: E, B](f: A => ZIO[R1, E1, B]): ZIO[R1, E1, B] =
-      ???
+      ZIO(env =>
+        run(env) match {
+          case Left(e)  => Left(e)
+          case Right(a) => f(a).run(env)
+        }
+      )
 
     def zip[R1 <: R, E1 >: E, B](that: ZIO[R1, E1, B]): ZIO[R1, E1, (A, B)] =
-      ???
+      for {
+        a <- self
+        b <- that
+      } yield (a, b)
 
-    def either: ZIO[R, Nothing, Either[E, A]] = ???
+    def either: ZIO[R, Nothing, Either[E, A]] =
+      ZIO(env =>
+        run(env) match {
+          case Left(e)  => Right(Left(e))
+          case Right(a) => Right(Right(a))
+        }
+      )
 
-    def provide(r: ZEnvironment[R]): ZIO[Any, E, A] = ???
+    def provide(r: ZEnvironment[R]): ZIO[Any, E, A] =
+      ZIO(_ => run(r))
 
     def orDie(implicit ev: E <:< Throwable): ZIO[R, Nothing, A] =
       ZIO(r => self.run(r).fold(throw _, Right(_)))
@@ -96,8 +124,8 @@ object ZIOModel {
   def main(args: Array[String]): Unit =
     Unsafe.unsafe { implicit u =>
       run {
-        printLine("Hello, what is your name?").flatMap(
-          _ => readLine.flatMap(name => printLine(s"Your name is: ${name}"))
+        printLine("Hello, what is your name?").flatMap(_ =>
+          readLine.flatMap(name => printLine(s"Your name is: ${name}"))
         )
       }
     }
@@ -144,7 +172,6 @@ object HelloWorld extends ZIOAppDefault {
 }
 
 object SimpleMap extends ZIOAppDefault {
-  import Console.readLine
 
   /**
    * EXERCISE
@@ -270,9 +297,7 @@ object ForComprehension extends ZIOAppDefault {
   val run =
     Console
       .printLine("What is your name?")
-      .flatMap(
-        _ => Console.readLine.flatMap(name => Console.printLine(s"Your name is: ${name}"))
-      )
+      .flatMap(_ => Console.readLine.flatMap(name => Console.printLine(s"Your name is: ${name}")))
 
 }
 
