@@ -15,7 +15,12 @@ object ForkJoin extends ZIOAppDefault {
    * and finally, print out a message "Joined".
    */
   val run =
-    printer
+    for {
+      fiber <- printer.fork
+      _     <- Console.printLine("Forked")
+      _     <- fiber.join
+      _     <- Console.printLine("Joined")
+    } yield ()
 }
 
 object ForkInterrupt extends ZIOAppDefault {
@@ -33,14 +38,17 @@ object ForkInterrupt extends ZIOAppDefault {
    */
   val run =
     for {
-      fiber <- infinitePrinter.fork 
-      _     <- ZIO.sleep(10.millis)
-      _     <- fiber.join
+      fiber <- infinitePrinter.fork
+      _     <- Console.printLine("Forked")
+      _     <- ZIO.sleep(100.millis)
+      _     <- fiber.interrupt
+      _     <- Console.printLine("Interrupted")
     } yield ()
 }
 
 object ParallelFib extends ZIOAppDefault {
- /**
+
+  /**
    * EXERCISE
    *
    * Rewrite this implementation to compute nth fibonacci number in parallel.
@@ -84,7 +92,7 @@ object TimeoutExample extends ZIOAppDefault {
    * Print out a message if it timed out.
    */
   lazy val run = fib(30).timeout(1.millis).flatMap {
-    case None => Console.printLine("It timed out!")
+    case None        => Console.printLine("It timed out!")
     case Some(value) => Console.printLine(s"The fibonacci number is ${value}")
   }
 }
@@ -128,8 +136,8 @@ object AlarmAppImproved extends ZIOAppDefault {
     } yield duration
   }
 
-  val infinitePrinter: ZIO[Any, IOException, Nothing] = 
-    (Console.print(".") *> ZIO.sleep(1.second)).forever 
+  val infinitePrinter: ZIO[Any, IOException, Nothing] =
+    (Console.print(".") *> ZIO.sleep(1.second)).forever
 
   val printWakeUp = Console.printLine("Time to wake up!!!")
 
@@ -164,19 +172,19 @@ object ParallelZip extends ZIOAppDefault {
    * the result.
    */
   val run =
-    ???
+    fib(10).zipPar(fib(13)).flatMap(Console.printLine(_))
 }
 
 object RefConcurrencyExample extends ZIOAppDefault {
-  def incrementer(ref: Ref[Int], n: Int): UIO[Unit] = 
+  def incrementer(ref: Ref[Int], n: Int): UIO[Unit] =
     ref.update(_ + 1).repeatN(n - 1)
 
-  val run = 
+  val run =
     for {
       ref <- Ref.make(0)
-      _   <- ZIO.foreach(1 to 100) { _ => incrementer(ref, 100).fork }
+      _   <- ZIO.foreachDiscard(1 to 100)(_ => incrementer(ref, 100).fork)
       _   <- ZIO.sleep(1.second)
-      v   <- ref.get 
+      v   <- ref.get
       _   <- Console.printLine(s"Value: ${v}")
     } yield ()
 }
@@ -187,10 +195,6 @@ object RefConcurrencyExample extends ZIOAppDefault {
  */
 object RefExample extends ZIOAppDefault {
   import zio.Random._
-
-  import zio.Clock._
-  import zio.stm._
-
 
   /**
    * Some state to keep track of all points inside a circle,
@@ -227,7 +231,8 @@ object RefExample extends ZIOAppDefault {
    * If the point is inside the circle then increment `PiState#inside`. In any
    * case, increment `PiState#total`.
    */
-  def addPoint(point: (Double, Double), piState: PiState): UIO[Unit] = ???
+  def addPoint(point: (Double, Double), piState: PiState): UIO[Unit] =
+    ZIO.when(insideCircle(point._1, point._2))(piState.inside.update(_ + 1)) *> piState.total.update(_ + 1)
 
   /**
    * EXERCISE
@@ -235,8 +240,25 @@ object RefExample extends ZIOAppDefault {
    * Build a multi-fiber program that estimates the value of `pi`. Print out
    * ongoing estimates continuously until the estimation is complete.
    */
-  val run =
-    ???
+  val run = {
+    def simulate(piState: PiState) =
+      for {
+        point  <- randomPoint
+        _      <- addPoint(point, piState)
+        inside <- piState.inside.get
+        total  <- piState.total.get
+        pi     = estimatePi(inside, total)
+        _      <- ZIO.when(total % 1000000 == 0)(Console.printLine(s"Current estimate: $pi"))
+      } yield ()
+
+    for {
+      inside      <- Ref.make(0L)
+      total       <- Ref.make(0L)
+      piState     = PiState(inside, total)
+      parallelism <- ZIO.suspendSucceed(ZIO.succeed(java.lang.Runtime.getRuntime.availableProcessors()))
+      _           <- ZIO.foreachParDiscard(0 to parallelism)(_ => simulate(piState).forever)
+    } yield ()
+  }
 }
 
 object PromiseExample extends ZIOAppDefault {
@@ -251,7 +273,7 @@ object PromiseExample extends ZIOAppDefault {
    * Do some computation that produces an integer. When you are done, complete
    * the promise with `Promise#succeed`.
    */
-  def doCompute(result: Promise[Nothing, Int]): UIO[Unit] = 
+  def doCompute(result: Promise[Nothing, Int]): UIO[Unit] =
     result.succeed(42).unit
 
   /**
@@ -261,11 +283,13 @@ object PromiseExample extends ZIOAppDefault {
    * that it can use, and then wait for the promise to be completed,
    * using `Promise#await`.
    */
-  lazy val waitForCompute: ZIO[Any, java.io.IOException, Unit] = 
+  lazy val waitForCompute: ZIO[Any, java.io.IOException, Unit] =
     for {
       promise <- Promise.make[Nothing, Int]
       _       <- doCompute(promise).forkDaemon
       _       <- Console.printLine("Started computation in background")
+      _       <- promise.await
+      _       <- Console.printLine("Done")
     } yield ()
 
   val run =
