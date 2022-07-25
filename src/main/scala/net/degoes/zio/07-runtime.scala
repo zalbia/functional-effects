@@ -1,8 +1,9 @@
 package net.degoes.zio
 
 import zio._
-import scala.concurrent.ExecutionContext
+
 import java.io.IOException
+import scala.concurrent.ExecutionContext
 
 object CustomRuntime {
   val defaultEnvironment  = ZEnvironment.empty
@@ -11,14 +12,12 @@ object CustomRuntime {
 
   final case class AppConfig(name: String)
 
-  def myZioMethod(): ZIO[Any, Throwable, Unit] = 
+  def myZioMethod(): ZIO[Any, Throwable, Unit] =
     for {
       runtime <- ZIO.runtime
     } yield {
-      Unsafe.unsafe { implicit u =>
-        runtime.unsafe.run(Console.printLine("Hello World!")).getOrThrow()
-      }
-    }  
+      Unsafe.unsafe(implicit u => runtime.unsafe.run(Console.printLine("Hello World!")).getOrThrow())
+    }
 
   /**
    * EXERCISE
@@ -26,7 +25,7 @@ object CustomRuntime {
    * Create a custom runtime that bundles a value of type `AppConfig` into the
    * environment.
    */
-  lazy val customRuntime = 
+  lazy val customRuntime =
     Runtime(defaultEnvironment ++ ZEnvironment(AppConfig("My App")), defaultFiberRefs, defaultRuntimeFlags)
 
   val program: ZIO[AppConfig, IOException, Unit] =
@@ -48,9 +47,7 @@ object CustomRuntime {
    * or `Unsafe.unsafe { ... }` (Scala 3) in order to call `run`.
    */
   def main(args: Array[String]): Unit =
-    Unsafe.unsafe { implicit u => 
-      customRuntime.unsafe.run(program).getOrThrow()
-    }
+    Unsafe.unsafe(implicit u => customRuntime.unsafe.run(program).getOrThrow())
 }
 object ThreadPool extends ZIOAppDefault {
 
@@ -62,7 +59,8 @@ object ThreadPool extends ZIOAppDefault {
    * Using `ZIO#onExecutor`, write an `onDatabase` combinator that runs the
    * specified effect on the database thread pool.
    */
-  def onDatabase[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] = ???
+  def onDatabase[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] =
+    zio.onExecutor(dbPool)
 
   /**
    * EXERCISE
@@ -74,14 +72,14 @@ object ThreadPool extends ZIOAppDefault {
     val log = ZIO.succeed {
       val thread = Thread.currentThread()
 
-      val id        = ???
-      val name      = ???
-      val groupName = ???
+      val id        = thread.getId
+      val name      = thread.getName
+      val groupName = thread.getThreadGroup.getName
 
       println(s"Thread($id, $name, $groupName)")
     }
 
-    zio
+    log *> zio
   }
 
   /**
@@ -91,18 +89,20 @@ object ThreadPool extends ZIOAppDefault {
    * determine which threads are executing which effects.
    */
   val run =
-    (Console.printLine("Main") *>
-      onDatabase {
-        Console.printLine("Database") *>
-          ZIO.blocking {
-            Console.printLine("Blocking")
-          } *>
-          Console.printLine("Database")
-      } *>
-      Console.printLine("Main"))
+    threadLogged {
+      threadLogged(Console.printLine("Main")) *>
+        onDatabase {
+          threadLogged(Console.printLine("Database")) *>
+            threadLogged(ZIO.blocking {
+              Console.printLine("Blocking")
+            }) *>
+            threadLogged(Console.printLine("Database"))
+        } *>
+        threadLogged(Console.printLine("Main"))
+    }
 }
 
-object CustomLogger {
+object CustomLogger extends ZIOAppDefault {
 
   /**
    * EXERCISE
@@ -110,14 +110,14 @@ object CustomLogger {
    * Using `ZLogger.simple`, create a logger that dumps text strings to the console
    * using `println`.
    */
-  lazy val simpleLogger: ZLogger[String, Unit] = ???
+  lazy val simpleLogger: ZLogger[String, Unit] = ZLogger.simple(println(_))
 
   /**
    * EXERCISE
    *
    * Create a layer that will install your simple logger using Runtime.addLogger.
    */
-  lazy val withCustomLogger: ZLayer[Any, Nothing, Unit] = ???
+  lazy val withCustomLogger: ZLayer[Any, Nothing, Unit] = Runtime.addLogger(simpleLogger)
 
   /**
    * EXERCISE
@@ -126,5 +126,5 @@ object CustomLogger {
    * and verify your logger is being used.
    */
   val run =
-    ZIO.log("Hello World!")
+    ZIO.log("Hello World!").provide(withCustomLogger)
 }
