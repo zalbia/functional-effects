@@ -294,14 +294,16 @@ object StmPriorityQueue extends ZIOAppDefault {
       _     <- Console.printLine("Enter any key to exit...")
       queue <- PriorityQueue.make[String].commit
       lowPriority = ZIO.foreach(0 to 100) { i =>
-        ZIO.sleep(1.millis) *> queue
+        queue
           .offer(s"Offer: ${i} with priority 3", 3)
           .commit
+          .delay(1.milli)
       }
       highPriority = ZIO.foreach(0 to 100) { i =>
-        ZIO.sleep(2.millis) *> queue
+        queue
           .offer(s"Offer: ${i} with priority 0", 0)
           .commit
+          .delay(2.millis)
       }
       _ <- ZIO.forkAll(List(lowPriority, highPriority)) *> queue.take.commit
             .flatMap(Console.printLine(_))
@@ -354,17 +356,53 @@ object StmReentrantLock extends ZIOAppDefault {
    * Using STM, implement a reentrant read/write lock.
    */
   class ReentrantReadWriteLock(data: TRef[Either[ReadLock, WriteLock]]) {
-    def writeLocks: UIO[Int] = ???
+    def writeLocks: UIO[Int] =
+      data.get.map {
+        case Left(_)          => 0
+        case Right(writeLock) => writeLock.writeCount
+      }.commit
 
-    def writeLocked: UIO[Boolean] = ???
+    def writeLocked: UIO[Boolean] =
+      data.get.map {
+        case Left(_)  => false
+        case Right(_) => true
+      }.commit
 
-    def readLocks: UIO[Int] = ???
+    def readLocks: UIO[Int] =
+      data.get.map {
+        case Left(readLock) => readLock.total
+        case Right(_)       => 0
+      }.commit
 
-    def readLocked: UIO[Boolean] = ???
+    def readLocked: UIO[Boolean] =
+      writeLocked.map(!_)
 
-    val read: ZIO[Scope, Nothing, Int] = ???
+    val read: ZIO[Scope, Nothing, Int] =
+      ZIO.fiberId.flatMap { fiberId =>
+        STM.atomically {
+          for {
+            readLock <- data.get.flatMap {
+                         case Left(readLock) =>
+                           val adjusted = readLock.adjust(fiberId, -1)
+                           data.set(Left(adjusted)) *> STM.succeed(adjusted)
+                         case Right(_) =>
+                           STM.retry
+                       }
+          } yield readLock.total
+        }
+      }
 
-    val write: ZIO[Scope, Nothing, Int] = ???
+    val write: ZIO[Scope, Nothing, Int] =
+      ZIO.fiberId.flatMap { fiberId =>
+        STM.atomically {
+          for {
+            writeLock <- data.get.flatMap {
+                          case Left(_)          => STM.retry
+                          case Right(writeLock) => ???
+                        }
+          } yield ???
+        }
+      }
   }
   object ReentrantReadWriteLock {
     def make: UIO[ReentrantReadWriteLock] = ???
@@ -399,7 +437,12 @@ object StmDiningPhilosophers extends ZIOAppDefault {
     left: TRef[Option[Fork]],
     right: TRef[Option[Fork]]
   ): STM[Nothing, (Fork, Fork)] =
-    ???
+    left.get.zip(right.get).flatMap {
+      case (Some(leftFork), Some(rightFork)) =>
+        STM.succeed((leftFork, rightFork))
+      case _ =>
+        STM.retry
+    }
 
   /**
    * EXERCISE
@@ -408,7 +451,8 @@ object StmDiningPhilosophers extends ZIOAppDefault {
    */
   def putForks(left: TRef[Option[Fork]], right: TRef[Option[Fork]])(
     tuple: (Fork, Fork)
-  ): STM[Nothing, Unit] = ???
+  ): STM[Nothing, Unit] =
+    left.set(Some(tuple._1)) *> right.set(Some(tuple._2))
 
   def setupTable(size: Int): ZIO[Any, Nothing, Roundtable] = {
     val makeFork = TRef.make[Option[Fork]](Some(Fork))
