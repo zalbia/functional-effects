@@ -36,10 +36,28 @@ object StmSwap extends ZIOAppDefault {
    *
    * Using `STM`, implement a safe version of the swap function.
    */
-  def exampleStm: UIO[Int] = ???
+  def exampleStm: UIO[Int] = {
+    def swap[A](tref1: TRef[A], tref2: TRef[A]) =
+      for {
+        v1 <- tref1.get
+        v2 <- tref2.get
+        _  <- tref2.set(v1)
+        _  <- tref1.set(v2)
+      } yield ()
+
+    for {
+      tref1  <- TRef.make(100).commit
+      tref2  <- TRef.make(0).commit
+      fiber1 <- swap(tref1, tref2).commit.repeatN(100).fork
+      fiber2 <- swap(tref2, tref1).commit.repeatN(100).fork
+      _      <- (fiber1 zip fiber2).join
+      value  <- ((tref1.get zipWith tref2.get)(_ + _)).commit
+    } yield value
+  }
 
   val run =
-    exampleRef.map(_.toString).flatMap(Console.printLine(_))
+    exampleRef.map(_.toString).flatMap(Console.printLine(_)) *>
+      exampleStm.map(_.toString).flatMap(Console.printLine(_))
 }
 
 object StmLock extends ZIOAppDefault {
@@ -53,11 +71,20 @@ object StmLock extends ZIOAppDefault {
    * acquisition, and release methods.
    */
   class Lock private (tref: TRef[Boolean]) {
-    def acquire: UIO[Unit] = ???
-    def release: UIO[Unit] = ???
+    def acquire: UIO[Unit] =
+      STM.atomically {
+        for {
+          locked <- tref.get
+          _      <- if (locked) STM.retry else tref.set(true)
+        } yield ()
+      }
+
+    def release: UIO[Unit] =
+      tref.set(false).commit
   }
+
   object Lock {
-    def make: UIO[Lock] = ???
+    def make: UIO[Lock] = TRef.make(false).commit.map(new Lock(_))
   }
 
   val run =
@@ -78,6 +105,7 @@ object StmLock extends ZIOAppDefault {
 object StmQueue extends ZIOAppDefault {
 
   import zio.stm._
+
   import scala.collection.immutable.{ Queue => ScalaQueue }
 
   /**
@@ -86,20 +114,33 @@ object StmQueue extends ZIOAppDefault {
    * Using STM, implement a async queue with double back-pressuring.
    */
   class Queue[A] private (capacity: Int, queue: TRef[ScalaQueue[A]]) {
-    def take: UIO[A]           = ???
-    def offer(a: A): UIO[Unit] = ???
+    def take: UIO[A] =
+      STM.atomically {
+        for {
+          scQueue <- queue.get
+          a       <- if (scQueue.isEmpty) STM.retry else queue.modify(_.dequeue)
+        } yield a
+      }
+
+    def offer(a: A): UIO[Unit] =
+      STM.atomically {
+        for {
+          scQueue <- queue.get
+          _       <- if (scQueue.size >= capacity) STM.retry else queue.set(scQueue.enqueue(a))
+        } yield ()
+      }
   }
+
   object Queue {
-    def bounded[A](capacity: Int): UIO[Queue[A]] = ???
+    def bounded[A](capacity: Int): UIO[Queue[A]] =
+      TRef.make(ScalaQueue.empty[A]).map(new Queue(capacity, _)).commit
   }
 
   val run =
     (for {
       queue <- Queue.bounded[Int](10)
       _     <- ZIO.foreach(0 to 100)(i => queue.offer(i)).fork
-      _ <- ZIO.foreach(0 to 100)(
-            _ => queue.take.flatMap(i => Console.printLine(s"Got: ${i}"))
-          )
+      _     <- ZIO.foreachDiscard(0 to 100)(_ => queue.take.flatMap(i => Console.printLine(s"Got: ${i}")))
     } yield ())
 }
 
@@ -115,9 +156,8 @@ object StmLunchTime extends ZIOAppDefault {
   final case class Attendee(state: TRef[Attendee.State]) {
     import Attendee.State._
 
-    def isStarving: STM[Nothing, Boolean] = ???
-
-    def feed: STM[Nothing, Unit] = ???
+    def feed: STM[Nothing, Unit] =
+      state.set(Full)
   }
   object Attendee {
     sealed trait State
@@ -142,9 +182,11 @@ object StmLunchTime extends ZIOAppDefault {
         }
         .map(_._2)
 
-    def takeSeat(index: Int): STM[Nothing, Unit] = ???
+    def takeSeat(index: Int): STM[Nothing, Unit] =
+      seats.update(index, _ => true)
 
-    def vacateSeat(index: Int): STM[Nothing, Unit] = ???
+    def vacateSeat(index: Int): STM[Nothing, Unit] =
+      seats.update(index, _ => false)
   }
 
   /**
@@ -152,7 +194,11 @@ object StmLunchTime extends ZIOAppDefault {
    *
    * Using STM, implement a method that feeds a single attendee.
    */
-  def feedAttendee(t: Table, a: Attendee): STM[Nothing, Unit] = ???
+  def feedAttendee(t: Table, a: Attendee): STM[Nothing, Unit] =
+    t.findEmptySeat.flatMap {
+      case Some(index) => t.takeSeat(index) *> a.feed *> t.vacateSeat(index)
+      case None        => STM.retry
+    }
 
   /**
    * EXERCISE
@@ -160,19 +206,23 @@ object StmLunchTime extends ZIOAppDefault {
    * Using STM, implement a method that feeds only the starving attendees.
    */
   def feedStarving(table: Table, attendees: Iterable[Attendee]): UIO[Unit] =
-    ???
+    STM.atomically {
+      for {
+        starvingAttendees <- STM.filter(attendees)(_.state.get.map(_ == Attendee.State.Starving))
+        _                 <- STM.foreach(starvingAttendees)(feedAttendee(table, _))
+      } yield ()
+    }
 
   val run = {
     val Attendees = 100
     val TableSize = 5
 
     for {
-      attendees <- ZIO.foreach(0 to Attendees)(
-                    i =>
-                      TRef
-                        .make[Attendee.State](Attendee.State.Starving)
-                        .map(Attendee(_))
-                        .commit
+      attendees <- ZIO.foreach(0 to Attendees)(_ =>
+                    TRef
+                      .make[Attendee.State](Attendee.State.Starving)
+                      .map(Attendee(_))
+                      .commit
                   )
       table <- TArray
                 .fromIterable(List.fill(TableSize)(false))
@@ -197,12 +247,46 @@ object StmPriorityQueue extends ZIOAppDefault {
     minLevel: TRef[Option[Int]],
     map: TMap[Int, TQueue[A]]
   ) {
-    def offer(a: A, priority: Int): STM[Nothing, Unit] = ???
+    def offer(a: A, priority: Int): STM[Nothing, Unit] =
+      for {
+        _ <- minLevel.update {
+              case Some(currentMin) => Some(currentMin.min(priority))
+              case _                => Some(priority)
+            }
+        queue <- map.get(priority).flatMap {
+                  case Some(queue) => STM.succeed(queue)
+                  case None        => TQueue.unbounded[A]
+                }
+        _ <- map.putIfAbsent(priority, queue)
+        _ <- queue.offer(a)
+      } yield ()
 
-    def take: STM[Nothing, A] = ???
+    private def newMin: USTM[Option[Int]] =
+      map.keys.map(_.foldLeft(Option.empty[Int]) { (a, i) =>
+        a match {
+          case Some(priority) => Some(priority.min(i))
+          case None           => Some(i)
+        }
+      })
+
+    def take: STM[Nothing, A] =
+      minLevel.get.flatMap {
+        case Some(min) =>
+          map.get(min).flatMap {
+            case Some(queue) =>
+              queue.take <* STM.whenSTM(queue.isEmpty) {
+                map.delete(min) *> newMin.flatMap(minLevel.set)
+              }
+            case None => STM.retry
+          }
+        case None => STM.retry
+      }
   }
   object PriorityQueue {
-    def make[A]: STM[Nothing, PriorityQueue[A]] = ???
+    def make[A]: STM[Nothing, PriorityQueue[A]] =
+      TRef
+        .make(Option.empty[Int])
+        .zipWith(TMap.empty[Int, TQueue[A]])(new PriorityQueue(_, _))
   }
 
   val run =
@@ -240,7 +324,7 @@ object StmReentrantLock extends ZIOAppDefault {
     def total: Int = readers.values.sum
 
     def noOtherHolder(fiberId: FiberId): Boolean =
-      readers.size == 0 || (readers.size == 1 && readers.contains(fiberId))
+      readers.isEmpty || (readers.size == 1 && readers.contains(fiberId))
 
     def readLocks(fiberId: FiberId): Int =
       readers.get(fiberId).fold(0)(identity)
@@ -292,6 +376,7 @@ object StmReentrantLock extends ZIOAppDefault {
 object StmDiningPhilosophers extends ZIOAppDefault {
 
   import zio.stm._
+
   import java.io.IOException
 
   sealed trait Fork
@@ -329,10 +414,8 @@ object StmDiningPhilosophers extends ZIOAppDefault {
     val makeFork = TRef.make[Option[Fork]](Some(Fork))
 
     (for {
-      allForks0 <- STM.foreach(0 to size) { i =>
-                    makeFork
-                  }
-      allForks = allForks0 ++ List(allForks0(0))
+      allForks0 <- STM.foreach(0 to size)(i => makeFork)
+      allForks  = allForks0 ++ List(allForks0(0))
       placements = (allForks zip allForks.drop(1)).map {
         case (l, r) => Placement(l, r)
       }
@@ -360,9 +443,7 @@ object StmDiningPhilosophers extends ZIOAppDefault {
     val count = 10
 
     def eaters(table: Roundtable): Iterable[ZIO[Any, IOException, Unit]] =
-      (0 to count).map { index =>
-        eat(index, table)
-      }
+      (0 to count).map(index => eat(index, table))
 
     (for {
       table <- setupTable(count)

@@ -68,11 +68,9 @@ object SimpleActor extends ZIOAppDefault {
 
     (for {
       actor <- makeActor(0)
-      _ <- ZIO.foreachPar(temperatures) { temp =>
-            actor(AdjustTemperature(temp))
-          }
-      temp <- actor(ReadTemperature)
-      _    <- Console.printLine(s"Final temperature is ${temp}")
+      _     <- ZIO.foreachParDiscard(temperatures)(temp => actor(AdjustTemperature(temp)))
+      temp  <- actor(ReadTemperature)
+      _     <- Console.printLine(s"Final temperature is ${temp}")
     } yield ())
   }
 }
@@ -381,8 +379,7 @@ object TicTacToe extends ZIOAppDefault {
      */
     final def won: Option[Mark] =
       if (wonBy(Mark.X)) Some(Mark.X)
-      else if (wonBy(Mark.O)) Some(Mark.O)
-      else None
+      else Some(Mark.O).filter(wonBy)
 
     private final def wonBy(mark: Mark): Boolean =
       wonBy(0, 0, 1, 1, mark) ||
